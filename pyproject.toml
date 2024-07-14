@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "actuarial_tooling"
+version = "0.1.0"
+description = ""
+authors = ["Jan-Hendrik Zab <jan@jhz.name>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+polars = "^1.0"
+loguru = "^0.7.2"
+matplotlib = "*"
+pyarrow = "*" # to convert form pandas df
+
+[tool.poetry.group.devel.dependencies]
+pytest = "^7"
+pytest-cov = "^4"
+pytest-mock = "*"
+black = "*"
+darker = "*"
+scikit-learn = "*"
+numpy = "*"
+pandas = "*"
+
+[tool.black]
+line-length = 120
