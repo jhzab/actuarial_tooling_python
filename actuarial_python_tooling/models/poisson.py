@@ -13,16 +13,33 @@ Even in that case problems with +/-inf might appear if log/exp is involved!
 
 
 @jax.jit
+def _factorial(n):
+    # lgamma is the elementwise log gamma of n and gamma is 'the' gamma function: gamma(n) = (n - 1)!
+    return jax.lax.exp(jax.lax.lgamma(n + 1.0)).astype(int)
+
+
+jax_factorial = jax.vmap(_factorial)
+
+
+@jax.jit
 def poisson_neg_log_loss(beta, X, y, weights) -> jax.Array:
+    """
+    Returns the negative poisson log likelihood as implemented in: https://jax.quantecon.org/mle.html
+
+    The only change is the use of the mean vs. the sum. This should make it a lot easier to use the
+    loss function inside of any batched update procedure (ie. sgd). Since the loss will not directly
+    depend on the batch size.
+
+    The factorial is actually important for finding the correct coefficients! Without it the weighted mean of the predictions
+    will be correct, but the model will still be bad if one checks a subset of predictions via a simple lift plot for instance.
+
+    PoissonNLLLoss in PyTorch also includes that part of the loss: https://pytorch.org/docs/stable/generated/torch.nn.PoissonNLLLoss.html#torch.nn.PoissonNLLLoss
+    """
     μ = jnp.exp(X @ beta)
     if weights is not None:
-        return -1 * jnp.mean(
-            (y * jnp.log(μ) - μ) * weights
-        )  # mean vs sum: https://discuss.pytorch.org/t/loss-reduction-sum-vs-mean-when-to-use-each/115641/2
+        return -1 * jnp.mean((y * jnp.log(μ) - μ - jnp.log(jax_factorial(y))) * weights)
     else:
-        return -1 * jnp.mean(
-            (y * jnp.log(μ) - μ)
-        )  # mean vs sum: https://discuss.pytorch.org/t/loss-reduction-sum-vs-mean-when-to-use-each/115641/2
+        return -1 * jnp.mean((y * jnp.log(μ) - μ - jnp.log(jax_factorial(y))))
 
 
 def poisson_neg_log_loss_no_jit(beta, X, y) -> jax.Array:
