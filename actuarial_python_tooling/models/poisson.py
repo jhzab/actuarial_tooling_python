@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import jaxopt
 import optax
+import optax.tree_utils as otu
 
 
 """
@@ -42,13 +43,6 @@ def poisson_neg_log_loss(beta, X, y, weights) -> jax.Array:
         return -1 * jnp.mean((y * jnp.log(μ) - μ - jnp.log(jax_factorial(y))))
 
 
-def poisson_neg_log_loss_no_jit(beta, X, y) -> jax.Array:
-    μ = jnp.exp(X @ beta)
-    print(X @ beta)
-    print(μ.flatten())
-    return -1 * jnp.sum(y * jnp.log(μ) - μ)
-
-
 poisson_neg_log_loss_gradient = jax.grad(poisson_neg_log_loss)
 poisson_neg_log_loss_hessian = jax.jacfwd(poisson_neg_log_loss_gradient)
 
@@ -86,14 +80,14 @@ def newton_raphson(X, y, beta, loss, gradient, hessian, tol=1e-3, max_iter=100, 
     return beta
 
 
-def solve_via_jaxopt(X, y, weights, init_β):
+def solve_via_jaxopt_lbfgs(X, y, weights, init_β):
     init_β = init_β.reshape(X.shape[1], 1)
 
     # Create an object with Poisson model values
     _loss = partial(poisson_neg_log_loss, X=X, y=y, weights=weights)
 
-    solver = jaxopt.LBFGS(fun=_loss, maxiter=5)
-    return solver.run(init_β)
+    solver = jaxopt.LBFGS(fun=_loss, maxiter=10)
+    return solver.run(init_β)[0]
     # res = jminimize(poisson_logL_p, init_β, method="BFGS")  # hess=...
 
 
@@ -101,9 +95,10 @@ def solve_via_jaxopt_scipy(X, y, weights, init_β):
     init_β = init_β.reshape(X.shape[1], 1)
     _loss = partial(poisson_neg_log_loss, X=X, y=y, weights=weights)
     solver = jaxopt.ScipyMinimize(fun=_loss, maxiter=20, method="L-BFGS-B")
-    return solver.run(init_β)
+    return solver.run(init_β).params
 
 
+@jax.jit
 def solve_via_optax(X, y, weights, init_β):
     optimizer = optax.lbfgs()
     opt_state = optimizer.init(init_β)
@@ -111,7 +106,7 @@ def solve_via_optax(X, y, weights, init_β):
     value_and_grad = optax.value_and_grad_from_state(poisson_neg_log_loss)
     for _ in range(10):
         val, grad = value_and_grad(init_β, X, y, weights, state=opt_state)
-        print("value (objective function)", val)
+        # print("value (objective function)", val)
         updates, opt_state = optimizer.update(
             grad, opt_state, init_β, value=val, grad=grad, value_fn=poisson_neg_log_loss, X=X, y=y, weights=weights
         )
@@ -125,18 +120,47 @@ def solve_via_adam(X, y, weights, init_β):
 
     # Use newton_raphson to find the MLE
     # optimizer = optax.chain(optax.lbfgs(learning_rate=0.0002), linesearch)
-    optimizer = optax.adam(learning_rate=0.01, b1=0.4, b2=0.5)
+    optimizer = optax.adam(learning_rate=0.005, b1=0.4, b2=0.5)
 
     # Initialize parameters of the model + optimizer.
     opt_state = optimizer.init(init_β)
 
-    print("Objective function: ", poisson_neg_log_loss(init_β, X, y, weights))
-    for _ in range(1000):
+    # print("Objective function: ", poisson_neg_log_loss(init_β, X, y, weights))
+    for i in range(200):
+        # if i % 10 == 0:
+        #    print("Iteration:", i, poisson_neg_log_loss(init_β, X, y, weights))
         grad = jax.grad(poisson_neg_log_loss)(init_β, X, y, weights)
         updates, opt_state = optimizer.update(grad, opt_state)
         init_β = optax.apply_updates(init_β, updates)
 
-    print("beta", init_β)
-    print("Objective function: ", poisson_neg_log_loss(init_β, X, y, weights))
+    # print("beta", init_β)
+    # print("Objective function: ", poisson_neg_log_loss(init_β, X, y, weights))
 
     return init_β.flatten()
+
+
+def run_lbfgs(X, y, weights, init_beta, max_iter=10, tol=0.000001):
+    # https://optax.readthedocs.io/en/stable/_collections/examples/lbfgs.html#l-bfgs-solver
+    value_and_grad_fun = optax.value_and_grad_from_state(poisson_neg_log_loss)
+    opt = optax.lbfgs()
+
+    def step(carry):
+        params, state = carry
+        value, grad = value_and_grad_fun(params, X, y, weights, state=state)
+        updates, state = opt.update(
+            grad, state, params, value=value, grad=grad, value_fn=poisson_neg_log_loss, X=X, y=y, weights=weights
+        )
+        params = optax.apply_updates(params, updates)
+
+        return params, state
+
+    def continuing_criterion(carry):
+        _, state = carry
+        iter_num = otu.tree_get(state, "count")
+        grad = otu.tree_get(state, "grad")
+        err = otu.tree_l2_norm(grad)
+        return (iter_num == 0) | ((iter_num < max_iter) & (err >= tol))
+
+    init_carry = (init_beta, opt.init(init_beta))
+    final_params, final_state = jax.lax.while_loop(continuing_criterion, step, init_carry)
+    return final_params  # , final_state
