@@ -15,8 +15,11 @@ def _prepare_simple_lift_plot_data(
     # TODO: Should data be sorted by the weighted prediction if weights_col is set?
     data = data.sort(by=prediction_col, descending=False)
 
+    if weighted_mean and not weights_col:
+        raise ValueError("'weights_col' parameter needs to be set when 'weighted_mean' is True!")
+
     if weights_col is None or weighted_mean is False:
-        weights_col = "dummy_weights"
+        weights_col = "DUMMY_WEIGHTS"
         data = data.with_columns(pl.lit(1.0).alias(weights_col))
 
     data = data.with_columns(pl.col(weights_col).cum_sum().alias("SUMMED_WEIGHTS"))
@@ -73,6 +76,7 @@ def plot_simple_lift_plot(
         num_groups=num_groups,
         weighted_mean=weighted_mean,
     )
+    logger.debug(data)
 
     ax: axes.Axes
     fig, ax = plt.subplots()
@@ -89,8 +93,12 @@ def plot_simple_lift_plot(
     plt.setp(labels, rotation=45, horizontalalignment="right", size=10)
 
     ax2: axes.Axes = ax.twinx()
-    ax2.set_ylabel("Exposre")
+    ax2.set_ylabel("Exposure")
     ax2.yaxis.get_label().set_fontsize(label_font_size)
+    if weights_col is None or weighted_mean is False:
+        weights_col = "DUMMY_WEIGHTS"
+        data = data.with_columns(pl.lit(1.0).alias(weights_col))
+        ax2.set_ylabel("Data points")
     ax2.bar(data["SEGMENT_NAMES"], data[weights_col], alpha=0.2)
 
     return ax
@@ -146,3 +154,83 @@ def _prepare_double_lift_plot_data(
     data = data.melt(id_vars="CUT_WEIGHTS", value_vars=[first_model_col, second_model_col, target_col])
 
     return data
+
+
+def _prepare_obs_pred_by_feature_value(
+    data: pl.DataFrame,
+    feature_col: str,
+    prediction_col: str,
+    target_col: str,
+    weights_col: str | None,
+    weighted_mean: bool = True,
+) -> pl.DataFrame:
+    original_weights_col = weights_col
+    if weighted_mean and not weights_col:
+        raise ValueError("'weights_col' parameter needs to be set when 'weighted_mean' is True!")
+
+    if weights_col is None or weighted_mean is False:
+        weights_col = "DUMMY_WEIGHTS"
+        data = data.with_columns(pl.lit(1.0).alias(weights_col))
+
+    data = data.with_columns(
+        (pl.col(target_col) * pl.col(weights_col).alias(target_col)),
+        (pl.col(prediction_col) * pl.col(weights_col).alias(prediction_col)),
+        pl.col(prediction_col).alias("ORIGINAL_PREDICTION"),
+    )
+
+    aggregations = [
+        (pl.sum(target_col) / pl.sum(weights_col)).alias(target_col),
+        (pl.sum(prediction_col) / pl.sum(weights_col)).alias(prediction_col),
+        pl.sum(weights_col),
+        pl.mean("ORIGINAL_PREDICTION"),
+        pl.len().alias("NUM_OBS"),
+    ]
+    if original_weights_col is not None:
+        aggregations = aggregations + [
+            pl.sum(original_weights_col).alias("ORIGINAL_EXPOSURE"),
+        ]
+    data = data.group_by(feature_col).agg(*aggregations).sort(feature_col)
+
+    return data
+
+
+def plot_obs_pred_by_feature_value(
+    data: pl.DataFrame,
+    feature_col: str,
+    prediction_col: str,
+    target_col: str,
+    weights_col: str | None,
+    weighted_mean: bool = True,
+) -> axes.Axes:
+    if weighted_mean is True and weights_col is None:
+        raise ValueError("'weights_col' parameter needs to be set when 'weighted_mean' is True!")
+
+    data = _prepare_obs_pred_by_feature_value(
+        data=data,
+        feature_col=feature_col,
+        prediction_col=prediction_col,
+        target_col=target_col,
+        weights_col=weights_col,
+        weighted_mean=weighted_mean,
+    )
+
+    ax: axes.Axes
+    fig, ax = plt.subplots()
+    ax.plot(data[feature_col], data[prediction_col], label="Prediction")
+    ax.plot(data[feature_col], data[target_col], label="Actual")
+    ax.legend()
+    ax.grid()
+    ax.set(xlabel=f"Values of: {feature_col}", ylabel="Pure Premium")
+    ax.set_title(feature_col)
+    labels = ax.get_xticklabels()
+    plt.setp(labels, rotation=45, horizontalalignment="right", size=10)
+
+    ax2: axes.Axes = ax.twinx()
+    ax2.set_ylabel("Exposre")
+    if weights_col is not None:
+        ax2.bar(data[feature_col], data["ORIGINAL_EXPOSURE"], alpha=0.2)
+    else:
+        # TODO: What if weighted_mean is false? What should we show?
+        ax2.bar(data[feature_col], data["NUM_OBS"], alpha=0.2)
+
+    return fig
