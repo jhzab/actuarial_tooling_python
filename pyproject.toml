@@ -1,26 +1,20 @@
-[tool.poetry]
-name = "actuarial_tooling"
+[project]
+name = "actuarial-python-tooling"
 version = "0.1.0"
-description = ""
-authors = ["Jan-Hendrik Zab <jan@jhz.name>"]
+description = "Add your description here"
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.12"
-polars = "^1.0"
-loguru = "^0.7.2"
-matplotlib = "*"
-pyarrow = "*" # to convert form pandas df
-
-[tool.poetry.group.devel.dependencies]
-pytest = "^7"
-pytest-cov = "^4"
-pytest-mock = "*"
-black = "*"
-darker = "*"
-scikit-learn = "*"
-numpy = "*"
-pandas = "*"
-
-[tool.black]
-line-length = 120
+requires-python = ">=3.13"
+dependencies = [
+    "jax<0.5.0",
+    "jaxopt>=0.8.3",
+    "loguru>=0.7.3",
+    "marimo>=0.11.25",
+    "matplotlib>=3.10.1",
+    "notebook>=7.3.3",
+    "numpy>=2.2.4",
+    "optax>=0.2.4",
+    "pandas>=2.2.3",
+    "polars>=1.25.2",
+    "ruff>=0.11.2",
+    "scikit-learn>=1.6.1",
+]
